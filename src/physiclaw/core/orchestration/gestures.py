@@ -22,7 +22,7 @@ from physiclaw.common import gesture_vocab
 from physiclaw.core.vision.util import validate_bbox
 
 if TYPE_CHECKING:
-    from physiclaw.core.calibration import ScreenTransforms
+    from physiclaw.core.calibration.transforms import ScreenGeometry
     from physiclaw.core.hardware.iphone import AssistiveTouch
 
 # One vocabulary, two views: the Literal aliases type every swipe
@@ -107,6 +107,13 @@ LEFT_EDGE = [0.015, 0.4, 0.025, 0.6]
 
 # Home: bottom-edge swipe up.
 HOME_SCREEN: tuple[Gesture, ...] = (Swipe(BOTTOM_EDGE, "up", "xl", "fast"),)
+
+# The HTTP stylus needs contact closer to the actual bottom edge and a
+# slower stroke: the GRBL recipe scrolled app content on the calibrated
+# ESP32 rig. Keep the difference in the recipe, not the generic swipe.
+ESP32_HOME_SCREEN: tuple[Gesture, ...] = (
+    Swipe([0.48, 0.992, 0.52, 0.998], "up", "xl", "slow"),
+)
 
 # Back: left-edge swipe right. Starts just inside the edge zone (see
 # LEFT_EDGE) and dwells briefly on contact so the touch is seen inside
@@ -196,7 +203,7 @@ class GestureValidator:
     def __init__(
         self,
         assistive_touch: Callable[[], "AssistiveTouch"],
-        transforms: Callable[[], "ScreenTransforms"],
+        transforms: Callable[[], "ScreenGeometry"],
     ):
         self._assistive_touch = assistive_touch
         self._transforms = transforms

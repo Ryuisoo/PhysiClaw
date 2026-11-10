@@ -79,6 +79,17 @@ def _offline_hardware_lines(deep: bool) -> Iterator[Check]:
     Yield the progress line before touching hardware; isolate serial and
     camera failures so one unavailable device does not hide later checks.
     """
+    from physiclaw.common.config import CONFIG
+
+    if CONFIG.hardware.backend == "esp32":
+        yield _fmt_info(
+            "Server",
+            "Not running",
+            "Checking the configured HTTP device without moving it.",
+        )
+        yield _probe_http_device()
+        return
+
     from physiclaw import port as os_platform
     from physiclaw.core.hardware.grbl import candidate_ports, detect_grbl
 
@@ -139,6 +150,32 @@ def _offline_hardware_lines(deep: bool) -> Iterator[Check]:
                 )
     for hint in os_platform.hardware_permission_hints():
         yield _fmt_warn("Permissions", hint)
+
+
+def _probe_http_device() -> Check:
+    """Read status only: connect/capture can trigger stylus avoidance."""
+    from physiclaw.common.config import CONFIG
+    from physiclaw.core.hardware.esp32 import ESP32Device
+
+    hardware = CONFIG.hardware
+    device = None
+    try:
+        device = ESP32Device(
+            hardware.device_url,
+            rotation=hardware.image_rotation,
+            timeout=hardware.timeout_seconds,
+        )
+        device.check_status()
+        return _fmt_ok(
+            "HTTP device",
+            "Motor link and visual calibration reported",
+            "Camera acquisition and physical alignment are not tested by doctor.",
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        return _fmt_error("HTTP device", "Preflight failed", str(exc))
+    finally:
+        if device is not None:
+            device.close()
 
 
 def _probe_server(live: dict | None) -> tuple[str, int, bool, object]:
@@ -596,6 +633,8 @@ def doctor(
     # Re-read the file: it may have changed since the process started.
     from physiclaw.common import config as _cfg
 
+    uses_http = _cfg.CONFIG.hardware.backend == "esp32"
+
     cp = _cfg.config_path()
     if cp.exists():
         try:
@@ -638,8 +677,12 @@ def doctor(
         )
 
     bundle = paths.calibration_bundle()
-    calibration_problem = not bundle.exists()
-    if not calibration_problem:
+    calibration_problem = False if uses_http else not bundle.exists()
+    if uses_http:
+        report.check(
+            _fmt_info("Calibration", "Device-owned; checked with hardware status")
+        )
+    elif not calibration_problem:
         report.check(_fmt_ok("Calibration file", "Saved", str(bundle)))
         if deep:
             calibration_check = _probe_calibration_deep()
@@ -691,19 +734,31 @@ def doctor(
             ("arm", "Arm", "Connected", "Not connected"),
             ("camera", "Camera", "Connected", "Not connected"),
             ("calibrated", "Calibration", "Complete", "Incomplete"),
-            ("ready", "Hardware setup", "Ready", "Not ready; finish hardware setup"),
+            (
+                "ready",
+                "Hardware setup",
+                "Ready",
+                "Not ready; check HTTP device and restart"
+                if uses_http
+                else "Not ready; finish hardware setup",
+            ),
         ):
             passed = status.get(key) is True
             result = _fmt_ok if passed else _fmt_warn
             report.check(result(label, yes if passed else no))
-        if deep:
+        if deep and not uses_http:
             report.check(_probe_bridge_deep(host, port))
     else:
         for check in _offline_hardware_lines(deep):
             report.check(check)
 
     if not status_problem:
-        if status is None:
+        if uses_http and (status is None or not ready_from_status(status)):
+            report.add_action(
+                "physiclaw mcp",
+                "Check device power, network and saved calibration, then start or restart the HTTP connection.",
+            )
+        elif status is None:
             report.add_action(
                 "physiclaw", "Start the server and open the hardware setup wizard."
             )

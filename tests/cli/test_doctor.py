@@ -516,6 +516,54 @@ def test_doctor_server_running_and_ready(mocker) -> None:
     assert "checks passed" in result.output
 
 
+@pytest.mark.parametrize("failure", [None, RuntimeError("motor link unavailable")])
+def test_http_doctor_offline_never_opens_usb_or_moves(
+    doctor_io, mocker, monkeypatch, failure
+):
+    from physiclaw.common.config import CONFIG
+
+    monkeypatch.setattr(CONFIG.hardware, "backend", "esp32")
+    monkeypatch.setattr(CONFIG.hardware, "device_url", "http://device.test:8888")
+    doctor_io.api.return_value = None
+    factory = mocker.patch("physiclaw.core.hardware.esp32.ESP32Device", autospec=True)
+    device = factory.return_value
+    device.check_status.side_effect = failure
+
+    result = runner.invoke(app, [])
+
+    assert result.exit_code == 0, result.exception
+    device.check_status.assert_called_once_with()
+    device.close.assert_called_once_with()
+    device.connect.assert_not_called()
+    device.capture.assert_not_called()
+    device.press.assert_not_called()
+    doctor_io.detect.assert_not_called()
+    doctor_io.camera.assert_not_called()
+    assert "physiclaw setup hardware" not in result.output
+    assert "Calibration file" not in result.output
+    assert ("Preflight failed" if failure else "Motor link") in result.output
+
+
+def test_http_doctor_ready_uses_device_calibration(doctor_io, monkeypatch):
+    from physiclaw.common.config import CONFIG
+
+    monkeypatch.setattr(CONFIG.hardware, "backend", "esp32")
+    doctor_io.api.return_value = {
+        "backend": "esp32",
+        "arm": True,
+        "camera": True,
+        "calibrated": True,
+        "ready": True,
+    }
+    result = runner.invoke(app, [])
+    assert result.exit_code == 0, result.exception
+    assert "Device-owned" in result.output
+    assert "physiclaw setup hardware" not in result.output
+    assert "Calibration file" not in result.output
+    doctor_io.detect.assert_not_called()
+    doctor_io.camera.assert_not_called()
+
+
 def test_doctor_optional_defaults_do_not_require_action(mocker) -> None:
     _patch_doctor_environment(
         mocker,

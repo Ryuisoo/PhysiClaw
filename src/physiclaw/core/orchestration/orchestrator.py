@@ -56,7 +56,7 @@ class PhysiClaw:
         # the current ones.
         self._validator = gestures.GestureValidator(
             assistive_touch=lambda: self.rig.assistive_touch,
-            transforms=lambda: self.rig.require_transforms(),
+            transforms=lambda: self.rig.gesture_geometry(),
         )
         self._clipboard = ClipboardSyncState()
         # Long-lived so the located "1" bbox caches across unlocks.
@@ -182,10 +182,7 @@ class PhysiClaw:
         gesture vocabulary and StylusArm deliberately share the names
         `tap` / `double_tap` / `long_press`. Caller must hold the lock."""
         self._validator.require_no_at_overlap(bbox, gesture)
-        self.rig.move_to_bbox_center(bbox)
-        arm = self.rig.require_arm()
-        getattr(arm, gesture)()
-        arm.wait_idle()
+        self.rig.press_bbox(bbox, gesture)
 
     def _swipe(
         self,
@@ -371,7 +368,10 @@ class PhysiClaw:
 
     def home_screen(self) -> "GestureResult":
         """Go to the home screen via bottom-edge swipe up."""
-        return self._run_macro(gestures.HOME_SCREEN, "Went to home screen")
+        recipe = (
+            gestures.ESP32_HOME_SCREEN if self.rig.uses_http else gestures.HOME_SCREEN
+        )
+        return self._run_macro(recipe, "Went to home screen")
 
     def go_back(self) -> "GestureResult":
         """Go back one screen via left-edge swipe right.

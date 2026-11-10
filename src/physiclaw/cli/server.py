@@ -654,6 +654,19 @@ def _start_hardware_bringup(
     HTTP serving stays responsive during setup. The caller waits for both
     servers to start first. --hot-start skips warm-start verification; when
     both are passed the verifying mode wins."""
+    if CONFIG.hardware.backend == "esp32":
+        if auto_calibrate:
+            logging.getLogger(__name__).error(
+                "ESP32 calibration is device-owned; calibrate in its web page and start without auto mode."
+            )
+        elif no_setup_hardware and not (warm_start or hot_start):
+            logging.getLogger(__name__).info(
+                "ESP32 setup deferred; restart without --no-setup-hardware to connect the configured device.",
+                extra={"console": True},
+            )
+        else:
+            _connect_http_hardware()
+        return
     if warm_start or hot_start:
         _warm_start_hardware(host, port, cam_index, verify=warm_start)
     elif auto_calibrate:
@@ -666,6 +679,30 @@ def _start_hardware_bringup(
         )
     else:
         _open_hardware_wizard(host, port)
+
+
+def _connect_http_hardware() -> None:
+    """Connect the configured ESP32 without probing USB or starting phone setup."""
+
+    def connect() -> None:
+        from physiclaw.core.server.app import default_bundle
+
+        pc = default_bundle.physiclaw
+        try:
+            with pc.rig.locked():
+                pc.rig.connect_device()
+            if not pc.become_ready():
+                raise RuntimeError("ESP32 readiness was not established")
+            logging.getLogger(__name__).info(
+                "ESP32 ready — device-calibrated camera and physical gestures; iPhone bridge tools are not connected.",
+                extra={"console": True},
+            )
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "ESP32 setup failed; check the device, saved calibration and hardware.device_url, then restart."
+            )
+
+    threading.Thread(target=connect, name="esp32-connect", daemon=True).start()
 
 
 def _warm_start_hardware(

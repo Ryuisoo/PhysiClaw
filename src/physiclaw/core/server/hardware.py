@@ -30,7 +30,7 @@ def register(mcp: "MCPServer", rig: "HardwareRig", phone: PageState) -> None:
 
     @mcp.custom_route("/setup-hardware", methods=["GET"])
     async def _setup_page(request: Request) -> HTMLResponse:
-        return await handle_setup_page(request)
+        return await handle_setup_page(request, rig)
 
     # The path constant is shared with every client-side reader
     # (`common.ready`) — route and probes can't drift apart.

@@ -61,6 +61,7 @@ async def test_calibration_routes_forward_to_handlers(
         s.side_effect = _ok
 
     pl, br, cb, ph = MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    pl.uses_http = False
     calib_reg.register(fake_mcp, pl, br, cb, ph)
 
     req = async_request()
@@ -77,3 +78,28 @@ async def test_calibration_routes_forward_to_handlers(
     for path, hname in routes_to_handlers.items():
         await fake_mcp.get(path, "POST")(req)
         assert spies[hname].called, f"{hname} not invoked from {path}"
+
+
+@pytest.mark.asyncio
+async def test_http_calibration_routes_never_enter_local_setup(
+    fake_mcp, async_request, mocker
+):
+    handlers = [
+        "handle_measure_viewport_shift",
+        "handle_calibrate_arm",
+        "handle_calibrate_camera_frame",
+        "handle_compute_camera_mapping",
+        "handle_validate_calibration",
+        "handle_trace_edge",
+        "handle_show_assistive_touch",
+        "handle_verify_assistive_touch",
+    ]
+    spies = [mocker.patch.object(calib_reg, name) for name in handlers]
+    rig = MagicMock(uses_http=True)
+    calib_reg.register(fake_mcp, rig, MagicMock(), MagicMock(), MagicMock())
+    for _, _, handler in fake_mcp.routes:
+        response = await handler(async_request())
+        assert response.status_code == 409
+        assert b"device-owned" in response.body
+    for spy in spies:
+        spy.assert_not_called()

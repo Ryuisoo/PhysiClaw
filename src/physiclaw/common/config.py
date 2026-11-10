@@ -84,6 +84,16 @@ class AutoPickConfig:
 
 
 @dataclass
+class HardwareConfig:
+    """Select the physical transport; ESP32 keeps its own saved calibration."""
+
+    backend: str = "grbl"
+    device_url: str = ""
+    image_rotation: int = 270
+    timeout_seconds: float = 30.0
+
+
+@dataclass
 class CameraConfig:
     """Resolution + pixel format the server requests from cv2.VideoCapture.
 
@@ -375,6 +385,7 @@ class Config:
     update: UpdateConfig = field(default_factory=UpdateConfig)
     warm_start: WarmStartConfig = field(default_factory=WarmStartConfig)
     auto_pick: AutoPickConfig = field(default_factory=AutoPickConfig)
+    hardware: HardwareConfig = field(default_factory=HardwareConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
@@ -593,6 +604,14 @@ def _check_scalar_type(section: str, key: str, declared: Any, value: Any) -> Any
             return value
     elif declared is int:
         if isinstance(value, int) and not isinstance(value, bool):
+            if (
+                section == "hardware"
+                and key == "image_rotation"
+                and value not in {0, 90, 180, 270}
+            ):
+                raise ConfigError(
+                    "[hardware] image_rotation: expected 0, 90, 180 or 270"
+                )
             if bounds := _INT_RANGES.get((section, key)):
                 lower, upper = bounds
                 if value < lower or (upper is not None and value > upper):
@@ -617,6 +636,10 @@ def _check_scalar_type(section: str, key: str, declared: Any, value: Any) -> Any
                 number = math.inf
             if not math.isfinite(number):
                 raise ConfigError(f"[{section}] {key}: expected a finite float")
+            if section == "hardware" and key == "timeout_seconds" and number <= 0:
+                raise ConfigError(
+                    "[hardware] timeout_seconds: expected a positive float"
+                )
             if section == "decision" and key == "timeout_seconds" and number <= 0:
                 raise ConfigError(f"[{section}] {key}: expected a positive float")
             if (
@@ -627,6 +650,12 @@ def _check_scalar_type(section: str, key: str, declared: Any, value: Any) -> Any
                 raise ConfigError(f"[{section}] {key}: expected a float in [0, 1]")
             return number
     elif isinstance(value, str):
+        if (
+            section == "hardware"
+            and key == "backend"
+            and value not in {"grbl", "esp32"}
+        ):
+            raise ConfigError("[hardware] backend: expected 'grbl' or 'esp32'")
         if (
             section == "decision"
             and key == "mode"

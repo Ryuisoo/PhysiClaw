@@ -30,6 +30,25 @@ flash_mod = importlib.import_module("physiclaw.cli.flash")
 app = typer.Typer()
 app.command()(flash_mod.flash)
 runner = CliRunner()
+
+
+def test_http_backend_refuses_flashing_before_port_or_firmware_access(
+    monkeypatch, mocker
+):
+    from physiclaw.common.config import CONFIG
+
+    monkeypatch.setattr(CONFIG.hardware, "backend", "esp32")
+    detect = mocker.patch.object(flash_mod, "_detect_port")
+    fetch = mocker.patch.object(flash_mod, "_fetch_bundle")
+    write = mocker.patch.object(flash_mod, "_uv_esptool")
+    result = runner.invoke(app, [])
+    assert result.exit_code != 0
+    assert "keeps its vendor firmware" in result.output
+    detect.assert_not_called()
+    fetch.assert_not_called()
+    write.assert_not_called()
+
+
 _IMAGE_NAMES = [
     "bootloader.bin",
     "partitions.bin",

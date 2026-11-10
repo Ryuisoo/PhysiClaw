@@ -26,6 +26,18 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _device_owned(rig: "HardwareRig") -> JSONResponse | None:
+    if rig.uses_http:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": "ESP32 calibration is device-owned; iPhone bridge calibration is not supported yet",
+            },
+            status_code=409,
+        )
+    return None
+
+
 def register(
     mcp: "MCPServer",
     rig: "HardwareRig",
@@ -37,32 +49,48 @@ def register(
 
     @mcp.custom_route("/api/calibrate/viewport-shift", methods=["POST"])
     async def _viewport_shift(request: Request) -> JSONResponse:
+        if error := _device_owned(rig):
+            return error
         return await handle_measure_viewport_shift(request, rig, calib, bridge, phone)
 
     @mcp.custom_route("/api/calibrate/arm", methods=["POST"])
     async def _arm(request: Request) -> JSONResponse:
+        if error := _device_owned(rig):
+            return error
         return await handle_calibrate_arm(request, rig, calib, phone)
 
     @mcp.custom_route("/api/calibrate/camera", methods=["POST"])
     async def _camera(request: Request) -> JSONResponse:
+        if error := _device_owned(rig):
+            return error
         return await handle_calibrate_camera_frame(request, rig, calib)
 
     @mcp.custom_route("/api/calibrate/camera-mapping", methods=["POST"])
     async def _camera_mapping(request: Request) -> JSONResponse:
+        if error := _device_owned(rig):
+            return error
         return await handle_compute_camera_mapping(request, rig, calib)
 
     @mcp.custom_route("/api/calibrate/validate", methods=["POST"])
     async def _validate(request: Request) -> JSONResponse:
+        if error := _device_owned(rig):
+            return error
         return await handle_validate_calibration(request, rig, calib, phone)
 
     @mcp.custom_route("/api/calibrate/trace-edge", methods=["POST"])
     async def _trace_edge(request: Request) -> JSONResponse:
+        if error := _device_owned(rig):
+            return error
         return await handle_trace_edge(request, rig, phone)
 
     @mcp.custom_route("/api/calibrate/assistive-touch/show", methods=["POST"])
     async def _at_show(request: Request) -> JSONResponse:
+        if error := _device_owned(rig):
+            return error
         return await handle_show_assistive_touch(request, rig, calib, phone)
 
     @mcp.custom_route("/api/calibrate/assistive-touch/verify", methods=["POST"])
     async def _at_verify(request: Request) -> JSONResponse:
+        if error := _device_owned(rig):
+            return error
         return await handle_verify_assistive_touch(request, rig, calib, bridge, phone)

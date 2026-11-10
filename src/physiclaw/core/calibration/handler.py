@@ -498,11 +498,10 @@ async def handle_trace_edge(
     def _do() -> dict:
         # rig.transforms is rebuilt per access — re-fetch and re-check the
         # prechecked value so the locals are narrowed under the lock.
-        arm, transforms = rig.arm, rig.transforms
+        arm = rig.arm
         if arm is None:
             raise PreconditionError("Arm not connected")
-        if transforms is None:
-            raise PreconditionError("Not calibrated — run /setup first")
+        transforms = rig.require_transforms()
         trace_screen_edge(arm, transforms)
         phone.set_mode("bridge")
         # Park off-phone after tracing so the rig ends in a clean

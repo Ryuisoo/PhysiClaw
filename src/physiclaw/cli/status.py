@@ -26,6 +26,10 @@ def _file_info(path: Path) -> tuple[stat_result | None, str | None]:
 
 
 def _calibration_status() -> str:
+    from physiclaw.common.config import CONFIG
+
+    if CONFIG.hardware.backend == "esp32":
+        return "device-owned (not checked; run physiclaw doctor)"
     try:
         data = paths.load_calibration_bundle()
     except OSError as e:

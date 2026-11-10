@@ -14,7 +14,11 @@ Text rows are valid tap targets even without a numbered image box. A row's `[0.5
 
 Gestures attach a fresh camera view; use it to verify and choose the next action. `peek` is non-mutating: use it when no current view exists, after waiting, or when the attached view failed or is still loading.
 
-`screenshot` takes a phone capture and **changes the phone state**; apps may open overlays. If the camera listing misses a target, take one screenshot, save its bbox in the scratchpad, then `peek` to check for side effects before using it. Re-ground if the layout changed.
+{{hardware_tool_guidance}}
+
+## iPhone launcher navigation
+
+After `home_screen`, inspect the attached view: an ordinary Home Screen page, App Library, and App Switcher are different states. App Library is beyond the rightmost Home Screen page; its visible search field can find installed apps. To return from App Library to an ordinary page, swipe `right` (the finger moves right and the page moves left), then verify the attached view. Do not repeat `home_screen` or assume that exiting an app selected a particular Home Screen page. Use grounded search controls and the visible keyboard when searching; clipboard transfer requires the connected bridge.
 
 ## Unchanged screen
 

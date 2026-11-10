@@ -22,6 +22,16 @@ status_mod = importlib.import_module("physiclaw.cli.status")
 status = status_mod.status
 
 
+def test_http_status_does_not_require_local_calibration(mocker, monkeypatch, capsys):
+    from physiclaw.common.config import CONFIG
+
+    monkeypatch.setattr(CONFIG.hardware, "backend", "esp32")
+    load = mocker.patch.object(status_mod.paths, "load_calibration_bundle")
+    status()
+    assert "device-owned (not checked" in capsys.readouterr().out
+    load.assert_not_called()
+
+
 def _bundle(**overrides) -> dict:
     """A complete v1 bundle shaped like Calibration.to_dict() writes it —
     `complete` is a @property there, so no such key exists on disk."""

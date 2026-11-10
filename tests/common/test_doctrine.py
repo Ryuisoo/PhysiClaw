@@ -50,6 +50,23 @@ def test_fill_tokens_passthrough_without_tokens() -> None:
     assert fill_tokens("TEST.md", "plain prose") == "plain prose"
 
 
+def test_http_guidance_does_not_recommend_unavailable_bridge_tools(monkeypatch) -> None:
+    monkeypatch.setattr(CONFIG.hardware, "backend", "esp32")
+    rendered = fill_tokens("PHYSICLAW.md", "{{hardware_tool_guidance}}")
+    assert "ESP32 HTTP" in rendered
+    assert "not connected yet" in rendered
+    assert "take one screenshot" not in rendered
+    assert "observe, act" in rendered
+    assert "{{" not in rendered
+
+
+def test_grbl_guidance_preserves_phone_screenshot_workflow(monkeypatch) -> None:
+    monkeypatch.setattr(CONFIG.hardware, "backend", "grbl")
+    rendered = fill_tokens("PHYSICLAW.md", "{{hardware_tool_guidance}}")
+    assert "take one screenshot" in rendered
+    assert "ESP32" not in rendered
+
+
 def test_fill_tokens_warns_on_unknown_token(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -54,7 +54,7 @@ async def test_hardware_routes_forward_to_handlers(
 
     req = async_request()
     await fake_mcp.get("/setup-hardware")(req)
-    spies["handle_setup_page"].assert_called_once_with(req)
+    spies["handle_setup_page"].assert_called_once_with(req, pl)
 
     await fake_mcp.get("/api/status")(req)
     spies["handle_status"].assert_called_once_with(req, pl)

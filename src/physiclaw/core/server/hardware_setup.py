@@ -30,7 +30,9 @@ log = logging.getLogger(__name__)
 # ─── Setup wizard page ──────────────────────────────────────
 
 
-async def handle_setup_page(request: Request) -> HTMLResponse:
+async def handle_setup_page(
+    request: Request, rig: "HardwareRig | None" = None
+) -> HTMLResponse:
     """GET /setup-hardware — serve the browser-based hardware-setup wizard.
 
     A single-file app that drives the same ``/api/*`` endpoints as
@@ -39,6 +41,13 @@ async def handle_setup_page(request: Request) -> HTMLResponse:
     renders from those URLs. ``Cache-Control: no-store`` so the browser
     always pulls the latest build after an upgrade.
     """
+    if rig is not None and rig.uses_http:
+        return HTMLResponse(
+            "<h1>ESP32 device</h1><p>Camera and motor calibration are saved on the device. "
+            "Use its own settings page to align the phone, then restart PhysiClaw to reconnect.</p>"
+            '<p><a href="/api/status">Connection status</a></p>',
+            headers={"Cache-Control": "no-store"},
+        )
     return HTMLResponse(
         render_phone_page_html("setup-hardware.html", request.url.port or 8048),
         headers={"Cache-Control": "no-store"},
@@ -65,6 +74,14 @@ async def handle_status(request: Request, rig: "HardwareRig") -> JSONResponse:
 
 async def handle_connect_arm(request: Request, rig: "HardwareRig") -> JSONResponse:
     """POST /api/connect-arm — auto-detect and connect the GRBL arm."""
+    if rig.uses_http:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": "ESP32 uses HTTP motion; local GRBL setup does not apply",
+            },
+            status_code=409,
+        )
 
     def _do() -> None:
         with rig.locked():
@@ -93,6 +110,14 @@ async def handle_connect_camera(
     Body: ``{"index": "auto"}`` (or body omitted) — auto-pick via the
     RGBM corner markers (see ``camera_pick.resolve_auto_index``).
     """
+    if rig.uses_http:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": "ESP32 supplies HTTP images; local USB camera setup does not apply",
+            },
+            status_code=409,
+        )
     body = await json_or_none(request, allow_empty=True)
     if body is None:
         return JSONResponse(
@@ -148,6 +173,15 @@ async def handle_disconnect_camera(
     — returns ``released=False`` if no camera was connected.
     """
 
+    if rig.uses_http:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": "ESP32 camera belongs to its device connection; stop the server to disconnect",
+            },
+            status_code=409,
+        )
+
     def _do() -> bool:
         with rig.locked():
             return rig.disconnect_camera()
@@ -161,6 +195,14 @@ async def handle_disconnect_camera(
 
 async def handle_camera_preview(request: Request, rig: "HardwareRig") -> JSONResponse:
     """GET /api/camera-preview/{index} — capture one frame from a camera index."""
+    if rig.uses_http:
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": "ESP32 supplies HTTP images; use peek after connecting the device",
+            },
+            status_code=409,
+        )
     watermark = request.query_params.get("watermark", "0") == "1"
     try:
         # Inside the try: the route has no :int converter, so a

@@ -3,8 +3,8 @@
 The rig owns the physical stack (arm, camera, AssistiveTouch, bridge,
 calibration state) and everything that guards it: connect/disconnect,
 the single hardware lock, parking, warm-start origin re-pinning, ready
-state, and teardown. It performs positioning moves but no gestures —
-taps, swipes, and their observation bracket live in the orchestrator.
+state, and teardown. It executes screen-space physical primitives;
+gesture policy and the observation bracket live in the orchestrator.
 
 Consumers that only need devices (the calibration and hardware-setup
 HTTP handlers) take a HardwareRig directly, so they never see the
@@ -17,11 +17,15 @@ import threading
 from contextlib import contextmanager
 
 from physiclaw.common import paths
+from physiclaw.common.config import CONFIG
 from physiclaw.common.text import read_text
 from physiclaw.core.bridge import BridgeState
 from physiclaw.core.calibration import PARK_PCT, Calibration, ScreenTransforms
+from physiclaw.core.calibration.transforms import RectifiedScreen, ScreenGeometry
 from physiclaw.core.hardware.arm import StylusArm
 from physiclaw.core.hardware.camera import Camera
+from physiclaw.core.hardware.esp32 import ESP32Device
+from physiclaw.core.hardware.frame_reader import PublishedFrame
 from physiclaw.core.hardware.iphone import AssistiveTouch
 
 log = logging.getLogger(__name__)
@@ -71,6 +75,81 @@ class HardwareRig:
         self._ready = False  # set True only after /setup finishes its last step
         # Does the GRBL work frame match `calibration`'s affine? See park().
         self._origin_pinned = False
+        self._backend = CONFIG.hardware.backend
+        self._device: ESP32Device | None = None
+        self._device_geometry: RectifiedScreen | None = None
+
+    @property
+    def uses_http(self) -> bool:
+        return self._backend == "esp32"
+
+    def connect_device(self) -> None:
+        """Attach the configured, already-calibrated ESP32 under the rig lock."""
+        self.assert_locked()
+        self._require_open()
+        if not self.uses_http:
+            raise RuntimeError(
+                "HTTP device connection requires hardware.backend = 'esp32'"
+            )
+        self.unmark_ready()
+        old, self._device = self._device, None
+        self._device_geometry = None
+        if old is not None:
+            old.close()
+        settings = CONFIG.hardware
+        device = ESP32Device(
+            settings.device_url,
+            rotation=settings.image_rotation,
+            timeout=settings.timeout_seconds,
+        )
+        try:
+            device.connect()
+            if device.frame_size is None:
+                raise RuntimeError("ESP32 did not establish its screen dimensions")
+            with self._lifecycle_lock:
+                self._require_open()
+                self._device_geometry = RectifiedScreen(device.frame_size)
+                self._device = device
+        except BaseException:
+            device.close()
+            raise
+
+    def require_device(self) -> ESP32Device:
+        if self._device is None:
+            raise RuntimeError(
+                "ESP32 is not connected; check hardware.device_url and restart the server"
+            )
+        return self._device
+
+    def capture_frame(self) -> PublishedFrame | None:
+        """One fresh frame: a device-rectified screen or a local camera view."""
+        if self.uses_http:
+            # The HTTP camera shares its session with motion. Local Camera
+            # keeps its existing independently locked capture contract.
+            self.assert_locked()
+            return self.require_device().capture()
+        return self.require_cam().snapshot_with_time()
+
+    def gesture_geometry(self) -> ScreenGeometry:
+        """Screen-space geometry, without inventing GRBL units for HTTP hardware."""
+        if self.uses_http:
+            if self._device_geometry is None:
+                raise RuntimeError("ESP32 screen calibration is not connected")
+            return self._device_geometry
+        return self.require_transforms()
+
+    def press_bbox(self, bbox: list[float], gesture: str) -> None:
+        """Execute one press in screen space; each transport owns its units."""
+        self.assert_locked()
+        if self.uses_http:
+            self.require_device().press(
+                *self.gesture_geometry().bbox_center_pct(bbox), gesture
+            )
+            return
+        self.move_to_bbox_center(bbox)
+        arm = self.require_arm()
+        getattr(arm, gesture)()
+        arm.wait_idle()
 
     # ─── Wiring ──────────────────────────────────────────────
 
@@ -85,6 +164,12 @@ class HardwareRig:
     @property
     def ready(self) -> bool:
         """True only after setup has fully completed AND hardware is still up."""
+        if self.uses_http:
+            return (
+                self._ready
+                and self.hardware_ready
+                and not self.require_device().action_uncertain
+            )
         return self._ready and self.hardware_ready and self._origin_pinned
 
     def mark_ready(self) -> None:
@@ -111,6 +196,13 @@ class HardwareRig:
     @property
     def hardware_ready(self) -> bool:
         """True when arm, camera, and grid calibration are all set."""
+        if self.uses_http:
+            return (
+                not self._closed
+                and self._device is not None
+                and self._device.connected
+                and self._device_geometry is not None
+            )
         return (
             not self._closed
             and self._arm is not None
@@ -120,6 +212,30 @@ class HardwareRig:
 
     def status(self) -> dict:
         """Return current hardware and calibration state."""
+        if self.uses_http:
+            connected = self.hardware_ready
+            return {
+                "backend": "esp32",
+                "arm": connected,
+                "camera": connected,
+                "bridge": self._bridge.connected if self._bridge else False,
+                "steps": {"device_calibration": "device-owned"} if connected else {},
+                "calibrated": connected,
+                "ready": self.ready,
+                "origin_pinned": False,
+                "layout_learned": _layout_learned(),
+                "action_uncertain": self._device.action_uncertain
+                if self._device
+                else False,
+                "capabilities": {
+                    "camera": True,
+                    "tap": True,
+                    "swipe": True,
+                    "drag_holds": False,
+                    "screenshot": False,
+                    "clipboard": False,
+                },
+            }
         steps = self.calibration.summary()
         arm = self._arm
         if arm is not None and arm.MOVE_DIRECTIONS:
@@ -144,6 +260,10 @@ class HardwareRig:
         the `ready` flag — `home_screen()` in setup's final step needs tools
         before `ready` is flipped.)"""
         if not self.hardware_ready:
+            if self.uses_http:
+                raise RuntimeError(
+                    "ESP32 hardware is not connected; check the device and restart the server"
+                )
             raise RuntimeError(
                 "Hardware not set up. Run /setup to connect and calibrate."
             )
@@ -287,6 +407,10 @@ class HardwareRig:
         ``physiclaw server`` boots with empty calibration, so the
         propagation is a no-op and step 7 of setup measures fresh.
         """
+        if self.uses_http:
+            raise RuntimeError(
+                "ESP32 uses HTTP motion; local GRBL setup is not applicable"
+            )
         with self._lifecycle_lock:
             self._require_open()
             self.unmark_ready()
@@ -343,6 +467,10 @@ class HardwareRig:
         from the very first open; empty calibration (fresh setup) leaves
         AF live until the mapping step pins it.
         """
+        if self.uses_http:
+            raise RuntimeError(
+                "ESP32 supplies HTTP images; USB camera selection is not applicable"
+            )
         self._require_open()
         self.disconnect_camera()
         cam = Camera(index, focus_value=self.calibration.cam_focus)
@@ -377,6 +505,10 @@ class HardwareRig:
         device — Media Foundation enforces exclusive access, so the
         server has to let go before the aim app opens.
         """
+        if self.uses_http:
+            raise RuntimeError(
+                "ESP32 camera belongs to its HTTP connection; stop the server to disconnect"
+            )
         # Clear readiness and detach first: close() can fail after it has
         # already stopped the reader. That handle must not remain live.
         with self._lifecycle_lock:
@@ -486,6 +618,10 @@ class HardwareRig:
 
     def require_arm(self) -> StylusArm:
         """The connected arm, or raise — for callers that must actuate."""
+        if self.uses_http:
+            raise RuntimeError(
+                "Raw GRBL operations are unavailable for ESP32; use normalized gestures"
+            )
         if self._arm is None:
             raise RuntimeError("Arm not connected. Run /setup to connect it.")
         return self._arm
@@ -497,12 +633,18 @@ class HardwareRig:
         return self._cam
 
     @property
-    def transforms(self) -> ScreenTransforms | None:
+    def transforms(self) -> ScreenTransforms | RectifiedScreen | None:
+        if self.uses_http:
+            return self._device_geometry
         return self.calibration.transforms()
 
     def require_transforms(self) -> ScreenTransforms:
         """The calibrated transforms, or raise — for callers that must map
         screen pct to hardware coordinates."""
+        if self.uses_http:
+            raise RuntimeError(
+                "ESP32 owns its motor calibration; GRBL millimetre transforms do not apply"
+            )
         t = self.calibration.transforms()
         if t is None:
             raise RuntimeError("Screen calibration not done")
@@ -515,6 +657,10 @@ class HardwareRig:
     def require_assistive_touch(self) -> AssistiveTouch:
         """The calibrated AssistiveTouch, or raise — for callers about to
         drive one of its iOS Shortcuts."""
+        if self.uses_http:
+            raise RuntimeError(
+                "iPhone screenshot and clipboard bridge is not connected for ESP32 yet; use peek and physical gestures"
+            )
         if not self._assistive_touch.ready:
             raise RuntimeError("AssistiveTouch not calibrated — run /setup first")
         return self._assistive_touch
@@ -586,6 +732,10 @@ class HardwareRig:
         refusing to move is the only safe park. Caller must hold the
         hardware lock.
         """
+        if self.uses_http:
+            if self._device is not None:
+                self._device.park()
+            return
         if self._arm is None:
             return
         park_xy = self.calibration.pct_to_grbl_mm(*PARK_PCT)
@@ -629,6 +779,16 @@ class HardwareRig:
         endpoint (see ``StylusArm.swipe_to``). Caller must hold the
         hardware lock."""
         self.assert_locked()
+        if self.uses_http:
+            geometry = self.gesture_geometry()
+            self.require_device().swipe(
+                geometry.bbox_center_pct(bbox),
+                geometry.swipe_end_pct(bbox, direction, dist),
+                speed,
+                start_dwell=start_dwell,
+                end_dwell=end_dwell,
+            )
+            return
         t = self.require_transforms()
         ex, ey = t.swipe_end_pct(bbox, direction, dist)
         ex_mm, ey_mm = t.pct_to_grbl_mm(ex, ey)
@@ -686,6 +846,19 @@ class HardwareRig:
         closed instead of installed if it finishes after shutdown starts.
         """
 
+        if self.uses_http:
+            with self._lifecycle_lock:
+                if self._closed:
+                    return
+                self._closed = True
+                self.unmark_ready()
+            with self.try_locked(lock_timeout):
+                with self._lifecycle_lock:
+                    device, self._device = self._device, None
+                    self._device_geometry = None
+                if device is not None:
+                    device.close()
+            return
         with self._lifecycle_lock:
             if self._closed:
                 return

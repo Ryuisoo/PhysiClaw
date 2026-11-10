@@ -117,14 +117,14 @@ class Perception:
         Call rig.park() first if an unobstructed view is needed.
         Frame is already rotated to portrait by the camera.
         """
-        frame = self._rig.require_cam().snapshot()
-        if frame is None:
+        sample = self._rig.capture_frame()
+        if sample is None:
             raise RuntimeError("Camera capture failed")
-        return frame
+        return sample.frame
 
     def cropped_snapshot(self) -> PublishedFrame:
         """A phone-screen crop with the publication time of those exact pixels."""
-        sample = self._rig.require_cam().snapshot_with_time()
+        sample = self._rig.capture_frame()
         if sample is None:
             raise RuntimeError("Camera capture failed")
         return sample._replace(
@@ -246,7 +246,11 @@ class Perception:
     def watch(self) -> dict:
         """Poll the camera for wake events. Returns ``{"wake": bool, "reason": str}``."""
         with self._rig.engaged():
-            frame = self._rig.require_cam().peek()
+            if self._rig.uses_http:
+                sample = self._rig.capture_frame()
+                frame = sample.frame if sample is not None else None
+            else:
+                frame = self._rig.require_cam().peek()
             if frame is None:
                 return {"wake": False, "reason": ""}
             return self._watchdog.poll(frame, self._rig.transforms)

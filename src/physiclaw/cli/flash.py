@@ -268,6 +268,12 @@ def flash(
     ] = False,
 ) -> None:
     """Flash FluidNC firmware onto the MKS DLC32 control board."""
+    from physiclaw.common.config import CONFIG
+
+    if CONFIG.hardware.backend == "esp32" and not dry_run:
+        exit_error(
+            "ESP32 HTTP hardware keeps its vendor firmware; FluidNC flashing is only for the GRBL board"
+        )
     typer.echo(section("PhysiClaw · Firmware flash"))
     typer.echo(info("MKS DLC32 V2.1 · FluidNC firmware"))
     if dry_run:

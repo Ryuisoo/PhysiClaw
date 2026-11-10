@@ -21,6 +21,34 @@ server_mod = importlib.import_module("physiclaw.cli.server")
 
 runner = CliRunner()
 
+
+@pytest.mark.parametrize(
+    "deferred,auto,connects",
+    [(False, False, True), (True, False, False), (False, True, False)],
+)
+def test_http_bringup_never_enters_local_hardware_setup(
+    mocker, monkeypatch, deferred, auto, connects
+):
+    monkeypatch.setattr(server_mod.CONFIG.hardware, "backend", "esp32")
+    connect = mocker.patch.object(server_mod, "_connect_http_hardware")
+    local_wizard = mocker.patch.object(server_mod, "_open_hardware_wizard")
+    local_resume = mocker.patch.object(server_mod, "_warm_start_hardware")
+    local_auto = mocker.patch.object(server_mod, "_auto_calibrate_hardware")
+    server_mod._start_hardware_bringup(
+        "127.0.0.1",
+        8148,
+        warm_start=False,
+        hot_start=False,
+        cam_index=None,
+        auto_calibrate=auto,
+        no_setup_hardware=deferred,
+    )
+    assert connect.called is connects
+    local_wizard.assert_not_called()
+    local_resume.assert_not_called()
+    local_auto.assert_not_called()
+
+
 # Mutation audit: 180 generated cases, 133 killed plus one detected timeout.
 # The 46 accepted survivors only decorate diagnostics, omit debug traceback
 # detail, substitute equivalent falsey values/an unused unset-model label, or

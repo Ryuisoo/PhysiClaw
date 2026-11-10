@@ -33,8 +33,50 @@ from physiclaw.core.geometry import apply_affine, invert_affine
 PARK_PCT = (-0.1, -0.05)
 
 
+class ScreenGeometry:
+    """Unitless phone-screen geometry shared by every motion transport."""
+
+    def bbox_center_pct(self, bbox: list[float]) -> tuple[float, float]:
+        return ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
+
+    def swipe_end_pct(
+        self, bbox: list[float], direction: str, dist: float
+    ) -> tuple[float, float]:
+        cx, cy = self.bbox_center_pct(bbox)
+        if direction == "up":
+            ex, ey = cx, cy - dist
+        elif direction == "down":
+            ex, ey = cx, cy + dist
+        elif direction == "left":
+            ex, ey = cx - dist, cy
+        elif direction == "right":
+            ex, ey = cx + dist, cy
+        else:
+            raise ValueError(f"direction must be up/down/left/right, got {direction!r}")
+        return (max(0.0, min(1.0, ex)), max(0.0, min(1.0, ey)))
+
+
 @dataclasses.dataclass
-class ScreenTransforms:
+class RectifiedScreen(ScreenGeometry):
+    """Pixel mapping for an already rectified screen; owns no motor units."""
+
+    cam_size: tuple[int, int]
+
+    def pixel_to_pct(self, px_x: int, px_y: int) -> tuple[float, float]:
+        return (px_x / self.cam_size[0], px_y / self.cam_size[1])
+
+    def bbox_to_pixel_rect(
+        self, bbox: list[float]
+    ) -> tuple[tuple[int, int], tuple[int, int]]:
+        w, h = self.cam_size
+        return (
+            (math.floor(bbox[0] * w), math.floor(bbox[1] * h)),
+            (math.ceil(bbox[2] * w), math.ceil(bbox[3] * h)),
+        )
+
+
+@dataclasses.dataclass
+class ScreenTransforms(ScreenGeometry):
     """Stores and applies grid calibration affine transforms.
 
     All coordinates use 0-1 decimals (0=left/top, 1=right/bottom).
@@ -58,32 +100,6 @@ class ScreenTransforms:
         self.pct_to_cam = pct_to_cam
         self.cam_size = cam_size
         self._cam_to_pct: np.ndarray | None = None  # lazy inverse cache
-
-    def bbox_center_pct(self, bbox: list[float]) -> tuple[float, float]:
-        """Compute center of a bounding box in screen coordinates (0-1)."""
-        return ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
-
-    def swipe_end_pct(
-        self, bbox: list[float], direction: str, dist: float
-    ) -> tuple[float, float]:
-        """Compute swipe end point from bbox center + direction + distance.
-
-        Returns end point in screen 0-1, clamped to stay on screen.
-        direction: 'up' | 'down' | 'left' | 'right' — stylus motion.
-        dist: screen-fraction distance (e.g. 0.1, 0.3, 0.5).
-        """
-        cx, cy = self.bbox_center_pct(bbox)
-        if direction == "up":
-            ex, ey = cx, cy - dist
-        elif direction == "down":
-            ex, ey = cx, cy + dist
-        elif direction == "left":
-            ex, ey = cx - dist, cy
-        elif direction == "right":
-            ex, ey = cx + dist, cy
-        else:
-            raise ValueError(f"direction must be up/down/left/right, got {direction!r}")
-        return (max(0.0, min(1.0, ex)), max(0.0, min(1.0, ey)))
 
     def pct_to_grbl_mm(self, x: float, y: float) -> tuple[float, float]:
         """Convert screen coordinate (0-1) to GRBL mm."""

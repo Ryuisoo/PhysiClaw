@@ -93,6 +93,12 @@ def testdrive(
     the phone off the bed.
     """
     from physiclaw.common import runtime_state
+    from physiclaw.common.config import CONFIG
+
+    if CONFIG.hardware.backend == "esp32":
+        exit_error(
+            "testdrive uses raw GRBL millimetres; use the ESP32 device calibration page and normalized MCP gestures"
+        )
 
     live = runtime_state.read_live()
     if live:

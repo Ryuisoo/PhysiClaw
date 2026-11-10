@@ -67,6 +67,37 @@ def _read_json(response) -> dict:
     return json.loads(bytes(response.body).decode())
 
 
+@pytest.mark.asyncio
+async def test_http_setup_page_does_not_offer_local_calibration():
+    response = await handle_setup_page(_fake_request(), SimpleNamespace(uses_http=True))
+    assert response.status_code == 200
+    assert b"saved on the device" in response.body
+    assert b"/api/calibrate/arm" not in response.body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["arm", "camera", "disconnect", "preview"])
+async def test_http_setup_rejects_local_device_operations(action, mocker):
+    rig = MagicMock(uses_http=True)
+    camera_preview = mocker.patch.object(hardware_setup, "camera_preview")
+    camera_select = mocker.patch.object(hardware_setup, "resolve_auto_index")
+    if action == "arm":
+        response = await handle_connect_arm(_fake_request(), rig)
+    elif action == "camera":
+        response = await handle_connect_camera(_fake_request(), rig, MagicMock())
+    elif action == "disconnect":
+        response = await handle_disconnect_camera(_fake_request(), rig)
+    else:
+        response = await handle_camera_preview(_fake_request(), rig)
+    assert response.status_code == 409
+    rig.acquire.assert_not_called()
+    rig.connect_arm.assert_not_called()
+    rig.connect_camera.assert_not_called()
+    rig.disconnect_camera.assert_not_called()
+    camera_preview.assert_not_called()
+    camera_select.assert_not_called()
+
+
 # ---------- handle_status ----------
 
 
@@ -148,7 +179,9 @@ def _rig_mock() -> MagicMock:
     ``release()`` (see ``wire_locked``), so the connect/disconnect tests assert
     the real acquire→release bracket rather than an inert context-manager
     mock."""
-    return wire_locked(MagicMock(name="rig"))
+    rig = wire_locked(MagicMock(name="rig"))
+    rig.uses_http = False
+    return rig
 
 
 def _fake_rig_cam_index(idx: int = 5) -> SimpleNamespace:

@@ -30,6 +30,17 @@ app.command()(testdrive_mod.testdrive)
 runner = CliRunner()
 
 
+def test_http_backend_refuses_raw_serial_testdrive(monkeypatch, mocker):
+    from physiclaw.common.config import CONFIG
+
+    monkeypatch.setattr(CONFIG.hardware, "backend", "esp32")
+    arm = mocker.patch("physiclaw.core.hardware.arm.StylusArm")
+    result = runner.invoke(app, [])
+    assert result.exit_code != 0
+    assert "raw GRBL millimetres" in result.output
+    arm.assert_not_called()
+
+
 class FakeArm:
     """Records the command's hardware calls; no serial underneath."""
 
